@@ -1,0 +1,25 @@
+# lc config file
+# Format: alias: command template
+#   %{N}    the N-th positional argument (1-based), can be reused
+#   %{**}   collects all remaining args starting right after the highest
+#           defined positional index (joined with spaces)
+#   \%      escaped literal %
+#   \\      escaped literal \
+# Lines starting with # or // are comments; blank lines are ignored.
+# Note: "init" is a reserved command name and must not appear as an alias here.
+
+ca: conda activate %{1}
+cda: conda deactivate
+ccpy: conda create -n %{1} python=%{2}
+crm: conda remove -n %{1} --all
+
+mkcd: mkdir %{1} && cd %{1}
+gac: git add -A && git commit -m "%{1}"
+
+tarpack: tar -cvf %{1} %{**}
+targz: tar -czvf %{1} %{**}
+tarbz2: tar -cjvf %{1} %{**}
+tarxz: tar -cJvf %{1} %{**}
+untar: tar -xvf %{1} %{**}
+
+aptup: apt update && apt upgrade

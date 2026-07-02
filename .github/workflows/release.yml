@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.0.0)'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  PROJECT_NAME: lc
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            arch: x86_64
+            os: ubuntu-latest
+            toolchain: native
+          - platform: linux
+            arch: arm64
+            os: ubuntu-24.04-arm
+            toolchain: native
+          - platform: macos
+            arch: arm64
+            os: macos-14
+            toolchain: native
+          - platform: windows
+            arch: x86_64
+            os: ubuntu-latest
+            toolchain: llvm-mingw
+            mingw_target: x86_64-w64-mingw32
+          - platform: windows
+            arch: x86
+            os: ubuntu-latest
+            toolchain: llvm-mingw
+            mingw_target: i686-w64-mingw32
+          - platform: windows
+            arch: arm64
+            os: ubuntu-latest
+            toolchain: llvm-mingw
+            mingw_target: aarch64-w64-mingw32
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW_VERSION="${{ github.event.inputs.version }}"
+          else
+            RAW_VERSION="${{ github.ref_name }}"
+          fi
+          echo "VERSION=${RAW_VERSION#v}" >> "$GITHUB_ENV"
+
+      - name: Install llvm-mingw
+        if: matrix.toolchain == 'llvm-mingw'
+        shell: bash
+        run: |
+          URL=$(curl -sL https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest \
+            | grep browser_download_url \
+            | grep 'ubuntu.*x86_64\.tar\.xz' \
+            | cut -d '"' -f 4 \
+            | head -n1)
+          curl -L -o llvm-mingw.tar.xz "$URL"
+          mkdir llvm-mingw
+          tar -xf llvm-mingw.tar.xz -C llvm-mingw --strip-components=1
+          echo "$(pwd)/llvm-mingw/bin" >> "$GITHUB_PATH"
+
+      - name: Build native
+        if: matrix.toolchain == 'native'
+        shell: bash
+        run: |
+          cc -std=c99 -O2 -o lc src/main.c src/strbuf.c src/pathutil.c src/config.c src/template.c src/init.c
+
+      - name: Build windows via llvm-mingw
+        if: matrix.toolchain == 'llvm-mingw'
+        shell: bash
+        run: |
+          ${{ matrix.mingw_target }}-gcc -std=c99 -O2 -o lc.exe src/main.c src/strbuf.c src/pathutil.c src/config.c src/template.c src/init.c
+
+      - name: Package
+        shell: bash
+        run: |
+          PKG_NAME="${PROJECT_NAME}-${VERSION}-${{ matrix.platform }}-${{ matrix.arch }}"
+          mkdir "$PKG_NAME"
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+            cp lc.exe "$PKG_NAME/"
+          else
+            cp lc "$PKG_NAME/"
+          fi
+          cp lc_config.txt "$PKG_NAME/"
+          zip -r "${PKG_NAME}.zip" "$PKG_NAME"
+          echo "PKG_NAME=${PKG_NAME}" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PKG_NAME }}
+          path: ${{ env.PKG_NAME }}.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir release
+          find artifacts -name '*.zip' -exec cp {} release/ \;
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
+          files: release/*.zip
